@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+.git/
+.gitignore
+.DS_Store
+*.log
+README.md
+run.sh
+backend/extract_seed.py
+backend/fetch_master.py
+backend/seed_db.py
+backend/import_history.py

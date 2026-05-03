@@ -11,9 +11,32 @@ User-facing dashboard for managing raw material, packaging, consumables, labels,
 
 ## Stack
 
-- Backend: FastAPI + SQLAlchemy + SQLite (local cache for fast queries)
+- Backend: FastAPI + SQLAlchemy
+- DB: SQLite locally, Postgres in production (Neon / Vercel Postgres / Supabase)
 - Sync: gspread + service-account auth (write-back to Google Sheet)
 - Frontend: single HTML page (Tailwind CDN + Alpine.js)
+- Deployable: serverless (Vercel) or container (Fly / Render)
+
+## Deploy on Vercel + Neon Postgres
+
+Prerequisites: a Neon (or Vercel Postgres / Supabase) connection string, Vercel CLI.
+
+```bash
+# 1. Provision Postgres (free): https://neon.tech → create project → copy DATABASE_URL
+export DATABASE_URL='postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require'
+
+# 2. Migrate (creates schema, seeds 1,866 items, imports 5,174 historical txns)
+python migrate.py
+
+# 3. Deploy to Vercel
+npm i -g vercel
+vercel login
+vercel --prod
+# When prompted for env vars, add DATABASE_URL (same as above)
+# Optional: GOOGLE_CREDENTIALS_JSON (paste your service-account JSON as one line)
+```
+
+After deploy, Vercel returns a URL like `https://inventoryerp.vercel.app`.
 
 ## Run
 

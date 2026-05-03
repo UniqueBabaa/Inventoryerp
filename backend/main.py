@@ -424,20 +424,29 @@ def sync_status():
     return sheets_sync.status()
 
 
-# ---------- Frontend ----------
+# ---------- Frontend (local dev only — Vercel serves /public statically) ----------
+IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "public")
 
+if not IS_SERVERLESS:
+    @app.get("/")
+    def root():
+        for d in (PUBLIC_DIR, FRONTEND_DIR):
+            p = os.path.join(d, "index.html")
+            if os.path.exists(p):
+                return FileResponse(p)
+        return {"detail": "frontend not bundled in this deployment"}
 
-@app.get("/")
-def root():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-
-
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+    if os.path.isdir(FRONTEND_DIR):
+        app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
 # ---------- Startup ----------
 @app.on_event("startup")
 def on_startup():
+    if IS_SERVERLESS:
+        # Schema is created at migration time against Postgres; do not auto-seed in serverless
+        return
     if int(os.environ.get("AUTO_SEED", "1")):
         seed_db.run()

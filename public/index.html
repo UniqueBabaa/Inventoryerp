@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Factory Stock Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
+  .pill { @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full; }
+  [x-cloak] { display:none !important; }
+  table { font-size: 13px; }
+  thead th { position: sticky; top: 0; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+<div x-data="dashboard()" x-init="init()" x-cloak class="min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-60 bg-slate-900 text-slate-100 p-4 hidden md:block">
+    <div class="text-lg font-semibold mb-1">Factory Stock</div>
+    <div class="text-xs text-slate-400 mb-6">Inventory & Transactions</div>
+    <nav class="space-y-1">
+      <template x-for="t in tabs" :key="t.key">
+        <button @click="tab = t.key"
+          :class="tab===t.key ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800'"
+          class="w-full text-left px-3 py-2 rounded text-sm flex justify-between items-center">
+          <span x-text="t.label"></span>
+          <span x-show="t.badge !== undefined" class="text-xs bg-slate-700 px-2 rounded-full" x-text="t.badge"></span>
+        </button>
+      </template>
+    </nav>
+    <div class="mt-8 text-xs text-slate-500">
+      <div class="border-t border-slate-800 pt-4">
+        <div>v1.0.0</div>
+        <div class="mt-1" x-text="'Items: ' + (summary.total_items || 0)"></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-4 md:p-6 overflow-x-auto">
+
+    <!-- Sync banner -->
+    <div class="mb-4 rounded-lg border px-4 py-2 text-sm flex items-center justify-between"
+         :class="sync.enabled ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                              : 'bg-amber-50 border-amber-200 text-amber-800'">
+      <div>
+        <span class="font-semibold">Google Sheets sync:</span>
+        <span x-show="sync.enabled">ON — every transaction & new item is written to <span class="underline">App_Transactions</span> / <span class="underline">App_Items</span> tabs of the master sheet.</span>
+        <span x-show="!sync.enabled">OFF — drop a service-account JSON at <code class="font-mono text-xs bg-amber-100 px-1 rounded">data/credentials.json</code> and share the sheet with that service account email to enable write-back.</span>
+      </div>
+      <a class="text-xs underline ml-3" :href="'https://docs.google.com/spreadsheets/d/' + sync.sheet_id + '/edit'" target="_blank">Open Sheet</a>
+    </div>
+
+    <!-- Top stat cards -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+      <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div class="text-xs text-slate-500 uppercase">Total SKUs</div>
+        <div class="text-2xl font-semibold mt-1" x-text="summary.total_items || 0"></div>
+      </div>
+      <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div class="text-xs text-slate-500 uppercase">Low Stock</div>
+        <div class="text-2xl font-semibold mt-1 text-amber-600" x-text="summary.low_stock_count || 0"></div>
+      </div>
+      <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div class="text-xs text-slate-500 uppercase">Out of Stock</div>
+        <div class="text-2xl font-semibold mt-1 text-rose-600" x-text="summary.out_of_stock_count || 0"></div>
+      </div>
+      <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div class="text-xs text-slate-500 uppercase">Today Received</div>
+        <div class="text-2xl font-semibold mt-1 text-emerald-600" x-text="fmt(summary.today_received_qty)"></div>
+      </div>
+      <div class="bg-white p-4 rounded-lg shadow-sm border border-slate-200">
+        <div class="text-xs text-slate-500 uppercase">Today Issued</div>
+        <div class="text-2xl font-semibold mt-1 text-indigo-600" x-text="fmt(summary.today_issued_qty)"></div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5 text-sm">
+      <div class="bg-white p-3 rounded border border-slate-200">
+        <span class="text-slate-500">Total transactions:</span>
+        <span class="font-semibold ml-1" x-text="fmt(summary.txn_count)"></span>
+      </div>
+      <div class="bg-white p-3 rounded border border-slate-200">
+        <span class="text-slate-500">GRN history:</span>
+        <span class="font-semibold ml-1" x-text="fmt((summary.txns_by_source||{}).grn || 0)"></span>
+      </div>
+      <div class="bg-white p-3 rounded border border-slate-200">
+        <span class="text-slate-500">Daily-log history:</span>
+        <span class="font-semibold ml-1" x-text="fmt((summary.txns_by_source||{}).daily_log || 0)"></span>
+      </div>
+      <div class="bg-white p-3 rounded border border-slate-200">
+        <span class="text-slate-500">Short/Excess:</span>
+        <span class="font-semibold ml-1 text-rose-600" x-text="fmt(summary.short_excess_count)"></span>
+      </div>
+    </div>
+
+    <!-- INVENTORY TAB -->
+    <section x-show="tab==='inventory'">
+      <div class="flex flex-wrap gap-2 items-center mb-3">
+        <h2 class="text-lg font-semibold mr-3">Inventory</h2>
+        <select x-model="filter.category" @change="loadItems()"
+          class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="">All categories</option>
+          <template x-for="c in categories" :key="c.key">
+            <option :value="c.key" x-text="`${c.label} (${c.count})`"></option>
+          </template>
+        </select>
+        <input x-model="filter.q" @input.debounce.300="loadItems()"
+          placeholder="Search SKU / brand / type"
+          class="border rounded px-2 py-1 text-sm w-72" />
+        <label class="text-sm flex items-center gap-1">
+          <input type="checkbox" x-model="filter.lowStock" @change="loadItems()" />
+          Low stock only
+        </label>
+        <div class="ml-auto flex gap-2">
+          <button @click="openTxn('receive')" class="bg-emerald-600 text-white text-sm px-3 py-1.5 rounded hover:bg-emerald-700">+ Receive</button>
+          <button @click="openTxn('issue')" class="bg-indigo-600 text-white text-sm px-3 py-1.5 rounded hover:bg-indigo-700">- Issue</button>
+          <button @click="newItemOpen=true" class="border border-slate-300 text-sm px-3 py-1.5 rounded hover:bg-slate-100">+ New Item</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="max-h-[65vh] overflow-auto">
+          <table class="min-w-full">
+            <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+              <tr>
+                <th class="px-3 py-2 text-left">Category</th>
+                <th class="px-3 py-2 text-left">Item</th>
+                <th class="px-3 py-2 text-left">Type/Pet</th>
+                <th class="px-3 py-2 text-right">Min</th>
+                <th class="px-3 py-2 text-right">Stock</th>
+                <th class="px-3 py-2 text-left">Unit</th>
+                <th class="px-3 py-2 text-left">Status</th>
+                <th class="px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="i in items" :key="i.id">
+                <tr class="border-t border-slate-100 hover:bg-slate-50">
+                  <td class="px-3 py-2 text-xs"><span class="pill bg-slate-100 text-slate-700" x-text="catLabel(i.category)"></span></td>
+                  <td class="px-3 py-2">
+                    <div class="font-medium" x-text="i.name"></div>
+                    <div class="text-xs text-slate-500" x-show="i.brand || i.packing"
+                         x-text="[i.brand, i.packing].filter(Boolean).join(' • ')"></div>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-slate-600" x-text="[i.type, i.pet].filter(Boolean).join(' / ')"></td>
+                  <td class="px-3 py-2 text-right text-slate-500" x-text="fmt(i.min_qty)"></td>
+                  <td class="px-3 py-2 text-right font-semibold"
+                      :class="i.current_stock<=0 ? 'text-rose-600' : (i.low_stock ? 'text-amber-600' : 'text-slate-800')"
+                      x-text="fmt(i.current_stock)"></td>
+                  <td class="px-3 py-2 text-xs text-slate-600" x-text="i.unit"></td>
+                  <td class="px-3 py-2 text-xs">
+                    <span x-show="i.current_stock<=0" class="pill bg-rose-100 text-rose-700">Out</span>
+                    <span x-show="i.current_stock>0 && i.low_stock" class="pill bg-amber-100 text-amber-700">Low</span>
+                    <span x-show="i.current_stock>0 && !i.low_stock" class="pill bg-emerald-100 text-emerald-700">OK</span>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <button class="text-xs text-emerald-700 hover:underline mr-2" @click="openTxn('receive', i)">Receive</button>
+                    <button class="text-xs text-indigo-700 hover:underline" @click="openTxn('issue', i)">Issue</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="items.length===0">
+                <td colspan="8" class="text-center text-slate-500 py-10">No items match filters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 text-xs text-slate-500 border-t" x-text="`${items.length} items`"></div>
+      </div>
+    </section>
+
+    <!-- TRANSACTIONS TAB -->
+    <section x-show="tab==='transactions'">
+      <div class="flex flex-wrap gap-2 items-center mb-3">
+        <h2 class="text-lg font-semibold mr-3">Transactions</h2>
+        <select x-model="txnFilter.txn_type" @change="loadTxns()" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="">All types</option>
+          <option value="receive">Receive</option>
+          <option value="issue">Issue</option>
+          <option value="adjust">Adjust</option>
+        </select>
+        <select x-model="txnFilter.category" @change="loadTxns()" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="">All categories</option>
+          <template x-for="c in categories" :key="c.key">
+            <option :value="c.key" x-text="c.label"></option>
+          </template>
+        </select>
+        <select x-model="txnFilter.source" @change="loadTxns()" class="border rounded px-2 py-1 text-sm bg-white">
+          <option value="">All sources</option>
+          <option value="dashboard">Dashboard (live)</option>
+          <option value="grn">GRN (history)</option>
+          <option value="daily_log">Daily log (history)</option>
+          <option value="sheet26">Sheet26 (history)</option>
+        </select>
+        <input x-model="txnFilter.q" @input.debounce.300="loadTxns()"
+          placeholder="Search item / vendor / invoice"
+          class="border rounded px-2 py-1 text-sm w-72" />
+        <span class="text-xs text-slate-500" x-text="`${txns.length} rows`"></span>
+        <div class="ml-auto flex items-center gap-1">
+          <span class="text-xs text-slate-500 mr-1">Export:</span>
+          <button @click="exportTxns('daily')" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">Today</button>
+          <button @click="exportTxns('weekly')" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">Week</button>
+          <button @click="exportTxns('monthly')" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">Month</button>
+          <button @click="exportTxns('yearly')" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">Year</button>
+          <button @click="exportTxns('all')" class="text-xs bg-slate-900 text-white rounded px-2 py-1 hover:bg-slate-700">All</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="max-h-[70vh] overflow-auto">
+          <table class="min-w-full">
+            <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+              <tr>
+                <th class="px-3 py-2 text-left">Date</th>
+                <th class="px-3 py-2 text-left">Type</th>
+                <th class="px-3 py-2 text-left">Item</th>
+                <th class="px-3 py-2 text-right">Qty</th>
+                <th class="px-3 py-2 text-left">Vendor / Issued To</th>
+                <th class="px-3 py-2 text-left">Received By / Issued By</th>
+                <th class="px-3 py-2 text-left">Invoice / Order</th>
+                <th class="px-3 py-2 text-left">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="t in txns" :key="t.id">
+                <tr class="border-t border-slate-100">
+                  <td class="px-3 py-2 text-xs whitespace-nowrap" x-text="fmtDate(t.txn_date)"></td>
+                  <td class="px-3 py-2 text-xs">
+                    <span class="pill"
+                      :class="t.txn_type==='receive' ? 'bg-emerald-100 text-emerald-700'
+                             : t.txn_type==='issue' ? 'bg-indigo-100 text-indigo-700'
+                             : 'bg-slate-100 text-slate-700'"
+                      x-text="t.txn_type"></span>
+                  </td>
+                  <td class="px-3 py-2" x-text="t.item_name"></td>
+                  <td class="px-3 py-2 text-right font-medium" x-text="fmt(t.qty)"></td>
+                  <td class="px-3 py-2 text-xs" x-text="t.party"></td>
+                  <td class="px-3 py-2 text-xs" x-text="t.person"></td>
+                  <td class="px-3 py-2 text-xs" x-text="t.invoice_no || t.order_no || ''"></td>
+                  <td class="px-3 py-2 text-xs">
+                    <span class="text-slate-600" x-text="t.remarks || ''"></span>
+                    <span class="pill ml-1"
+                      :class="t.source==='dashboard' ? 'bg-emerald-100 text-emerald-700'
+                              : t.source==='grn' ? 'bg-blue-100 text-blue-700'
+                              : 'bg-slate-100 text-slate-700'"
+                      x-text="t.source"></span>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="txns.length===0">
+                <td colspan="8" class="text-center text-slate-500 py-10">No transactions match filters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SHORT/EXCESS TAB -->
+    <section x-show="tab==='shortexcess'">
+      <h2 class="text-lg font-semibold mb-3">Short / Excess Receipts</h2>
+      <p class="text-sm text-slate-600 mb-3">Receives where the bill quantity didn't match the received quantity.</p>
+      <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div class="max-h-[70vh] overflow-auto">
+          <table class="min-w-full">
+            <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+              <tr>
+                <th class="px-3 py-2 text-left">Date</th>
+                <th class="px-3 py-2 text-left">Item</th>
+                <th class="px-3 py-2 text-left">Vendor</th>
+                <th class="px-3 py-2 text-left">Invoice</th>
+                <th class="px-3 py-2 text-right">Bill Qty</th>
+                <th class="px-3 py-2 text-right">Received Qty</th>
+                <th class="px-3 py-2 text-right">Diff</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="t in shortExcess" :key="t.id">
+                <tr class="border-t border-slate-100">
+                  <td class="px-3 py-2 text-xs whitespace-nowrap" x-text="fmtDate(t.txn_date)"></td>
+                  <td class="px-3 py-2" x-text="t.item_name"></td>
+                  <td class="px-3 py-2 text-xs" x-text="t.party"></td>
+                  <td class="px-3 py-2 text-xs" x-text="t.invoice_no"></td>
+                  <td class="px-3 py-2 text-right" x-text="fmt(t.bill_qty)"></td>
+                  <td class="px-3 py-2 text-right" x-text="fmt(t.qty)"></td>
+                  <td class="px-3 py-2 text-right font-semibold"
+                      :class="(t.qty - t.bill_qty) < 0 ? 'text-rose-600' : 'text-emerald-600'"
+                      x-text="fmt(t.qty - t.bill_qty)"></td>
+                </tr>
+              </template>
+              <tr x-show="shortExcess.length===0">
+                <td colspan="7" class="text-center text-slate-500 py-10">No short/excess discrepancies.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOW STOCK TAB -->
+    <section x-show="tab==='lowstock'">
+      <h2 class="text-lg font-semibold mb-3">Low Stock Alerts</h2>
+      <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <table class="min-w-full">
+          <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+            <tr>
+              <th class="px-3 py-2 text-left">Category</th>
+              <th class="px-3 py-2 text-left">Item</th>
+              <th class="px-3 py-2 text-right">Min Qty</th>
+              <th class="px-3 py-2 text-right">Current Stock</th>
+              <th class="px-3 py-2 text-right">Shortfall</th>
+              <th class="px-3 py-2 text-left">Unit</th>
+              <th class="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="i in lowItems" :key="i.id">
+              <tr class="border-t border-slate-100">
+                <td class="px-3 py-2 text-xs" x-text="catLabel(i.category)"></td>
+                <td class="px-3 py-2 font-medium" x-text="i.name"></td>
+                <td class="px-3 py-2 text-right" x-text="fmt(i.min_qty)"></td>
+                <td class="px-3 py-2 text-right" :class="i.current_stock<=0 ? 'text-rose-600' : 'text-amber-600'" x-text="fmt(i.current_stock)"></td>
+                <td class="px-3 py-2 text-right text-rose-600 font-semibold" x-text="fmt(Math.max(0, (i.min_qty || 0) - (i.current_stock || 0)))"></td>
+                <td class="px-3 py-2 text-xs" x-text="i.unit"></td>
+                <td class="px-3 py-2 text-right">
+                  <button class="text-xs text-emerald-700 hover:underline" @click="openTxn('receive', i)">Receive</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="lowItems.length===0">
+              <td colspan="7" class="text-center text-emerald-600 py-10">All stocks above minimum threshold</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- GRN TAB -->
+    <section x-show="tab==='grn'">
+      <div class="flex items-center mb-3 gap-2">
+        <h2 class="text-lg font-semibold mr-3">Goods Receipt Notes</h2>
+        <button class="ml-auto bg-emerald-600 text-white text-sm px-3 py-1.5 rounded hover:bg-emerald-700"
+                @click="grnOpen=true">+ New GRN</button>
+      </div>
+      <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <table class="min-w-full">
+          <thead class="bg-slate-100 text-slate-600 text-xs uppercase">
+            <tr>
+              <th class="px-3 py-2 text-left">Invoice No</th>
+              <th class="px-3 py-2 text-left">Invoice Date</th>
+              <th class="px-3 py-2 text-left">Vendor</th>
+              <th class="px-3 py-2 text-left">Received By</th>
+              <th class="px-3 py-2 text-left">Status</th>
+              <th class="px-3 py-2 text-left">Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="g in grns" :key="g.id">
+              <tr class="border-t border-slate-100">
+                <td class="px-3 py-2 font-medium" x-text="g.invoice_no"></td>
+                <td class="px-3 py-2 text-xs" x-text="fmtDate(g.invoice_date)"></td>
+                <td class="px-3 py-2" x-text="g.vendor"></td>
+                <td class="px-3 py-2 text-xs" x-text="g.received_by"></td>
+                <td class="px-3 py-2 text-xs">
+                  <span class="pill"
+                    :class="g.status==='Done' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
+                    x-text="g.status"></span>
+                </td>
+                <td class="px-3 py-2 text-xs text-slate-600" x-text="g.remarks"></td>
+              </tr>
+            </template>
+            <tr x-show="grns.length===0">
+              <td colspan="6" class="text-center text-slate-500 py-10">No GRNs logged.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TXN MODAL -->
+    <div x-show="txnOpen" class="fixed inset-0 z-30 bg-black/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-lg shadow-lg w-full max-w-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold" x-text="txnForm.txn_type==='receive' ? 'Receive Stock' : (txnForm.txn_type==='issue' ? 'Issue Stock' : 'Adjust Stock')"></h3>
+          <button @click="txnOpen=false" class="text-slate-400 hover:text-slate-700">&times;</button>
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block text-sm">
+              <span class="text-slate-600">Category</span>
+              <select x-model="txnForm.category" @change="txnForm.item_id=''; loadTxnItems()"
+                class="mt-1 w-full border rounded px-2 py-1.5 text-sm">
+                <option value="">— Select category —</option>
+                <template x-for="c in categories" :key="c.key">
+                  <option :value="c.key" x-text="`${c.label} (${c.count})`"></option>
+                </template>
+              </select>
+            </label>
+            <label class="block text-sm">
+              <span class="text-slate-600">Item</span>
+              <select x-model.number="txnForm.item_id"
+                :disabled="!txnForm.category"
+                class="mt-1 w-full border rounded px-2 py-1.5 text-sm disabled:bg-slate-100">
+                <option value="">— Select item —</option>
+                <template x-for="i in txnItems" :key="i.id">
+                  <option :value="i.id" x-text="`${i.name} (${i.unit}) — stock: ${fmt(i.current_stock)}`"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block text-sm">
+              <span class="text-slate-600">Qty</span>
+              <input type="number" step="0.01" x-model.number="txnForm.qty" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm">
+              <span class="text-slate-600">Date</span>
+              <input type="date" x-model="txnForm.txn_date" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+          </div>
+          <label class="block text-sm">
+            <span class="text-slate-600" x-text="txnForm.txn_type==='receive' ? 'Vendor' : 'Issued To / Order'"></span>
+            <input x-model="txnForm.party" list="vendor-list" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" placeholder="Party name" />
+            <datalist id="vendor-list">
+              <template x-for="v in vendors" :key="v"><option :value="v"></option></template>
+            </datalist>
+          </label>
+          <label class="block text-sm">
+            <span class="text-slate-600" x-text="txnForm.txn_type==='receive' ? 'Received By' : 'Issued By'"></span>
+            <input x-model="txnForm.person" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" placeholder="Person name" />
+          </label>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block text-sm" x-show="txnForm.txn_type==='receive'">
+              <span class="text-slate-600">Invoice No</span>
+              <input x-model="txnForm.invoice_no" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm" x-show="txnForm.txn_type==='issue'">
+              <span class="text-slate-600">Order No</span>
+              <input x-model="txnForm.order_no" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm col-span-2">
+              <span class="text-slate-600">Remarks</span>
+              <input x-model="txnForm.remarks" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+          </div>
+          <div class="text-xs text-rose-600" x-show="txnError" x-text="txnError"></div>
+          <div class="flex justify-end gap-2 pt-3 border-t">
+            <button @click="txnOpen=false" class="px-3 py-1.5 text-sm rounded border">Cancel</button>
+            <button @click="submitTxn()" class="px-3 py-1.5 text-sm rounded text-white"
+              :class="txnForm.txn_type==='receive' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-indigo-600 hover:bg-indigo-700'">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NEW ITEM MODAL -->
+    <div x-show="newItemOpen" class="fixed inset-0 z-30 bg-black/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-lg shadow-lg w-full max-w-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold">New Item</h3>
+          <button @click="newItemOpen=false" class="text-slate-400 hover:text-slate-700">&times;</button>
+        </div>
+        <div class="space-y-3">
+          <label class="block text-sm">
+            <span class="text-slate-600">Category</span>
+            <select x-model="newItem.category" class="mt-1 w-full border rounded px-2 py-1.5 text-sm">
+              <template x-for="c in categories" :key="c.key">
+                <option :value="c.key" x-text="c.label"></option>
+              </template>
+            </select>
+          </label>
+          <label class="block text-sm">
+            <span class="text-slate-600">Name</span>
+            <input x-model="newItem.name" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+          </label>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="block text-sm">
+              <span class="text-slate-600">Unit</span>
+              <input x-model="newItem.unit" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm">
+              <span class="text-slate-600">Min Qty</span>
+              <input type="number" step="0.01" x-model.number="newItem.min_qty" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm">
+              <span class="text-slate-600">Opening</span>
+              <input type="number" step="0.01" x-model.number="newItem.opening_stock" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+          </div>
+          <div class="flex justify-end gap-2 pt-3 border-t">
+            <button @click="newItemOpen=false" class="px-3 py-1.5 text-sm rounded border">Cancel</button>
+            <button @click="submitItem()" class="px-3 py-1.5 text-sm rounded bg-slate-900 text-white hover:bg-slate-800">Create</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GRN MODAL -->
+    <div x-show="grnOpen" class="fixed inset-0 z-30 bg-black/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-lg shadow-lg w-full max-w-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold">New GRN</h3>
+          <button @click="grnOpen=false" class="text-slate-400 hover:text-slate-700">&times;</button>
+        </div>
+        <div class="space-y-3">
+          <label class="block text-sm">
+            <span class="text-slate-600">Invoice No</span>
+            <input x-model="grnForm.invoice_no" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-sm">
+              <span class="text-slate-600">Invoice Date</span>
+              <input type="date" x-model="grnForm.invoice_date" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+            </label>
+            <label class="block text-sm">
+              <span class="text-slate-600">Status</span>
+              <select x-model="grnForm.status" class="mt-1 w-full border rounded px-2 py-1.5 text-sm">
+                <option>Pending</option>
+                <option>Done</option>
+                <option>Partial</option>
+              </select>
+            </label>
+          </div>
+          <label class="block text-sm">
+            <span class="text-slate-600">Vendor</span>
+            <input x-model="grnForm.vendor" list="vendor-list" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+          </label>
+          <label class="block text-sm">
+            <span class="text-slate-600">Received By</span>
+            <input x-model="grnForm.received_by" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+          </label>
+          <label class="block text-sm">
+            <span class="text-slate-600">Remarks</span>
+            <input x-model="grnForm.remarks" class="mt-1 w-full border rounded px-2 py-1.5 text-sm" />
+          </label>
+          <div class="flex justify-end gap-2 pt-3 border-t">
+            <button @click="grnOpen=false" class="px-3 py-1.5 text-sm rounded border">Cancel</button>
+            <button @click="submitGRN()" class="px-3 py-1.5 text-sm rounded bg-slate-900 text-white hover:bg-slate-800">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div x-show="toast" x-transition class="fixed bottom-6 right-6 bg-slate-900 text-white text-sm px-4 py-2 rounded shadow"
+         x-text="toast"></div>
+  </main>
+</div>
+
+<script>
+function dashboard() {
+  return {
+    tab: 'inventory',
+    tabs: [
+      {key: 'inventory', label: 'Inventory'},
+      {key: 'transactions', label: 'Transactions'},
+      {key: 'lowstock', label: 'Low Stock'},
+      {key: 'shortexcess', label: 'Short/Excess'},
+      {key: 'grn', label: 'GRN'},
+    ],
+    summary: {},
+    sync: { enabled: false, sheet_id: '' },
+    categories: [],
+    items: [],
+    txns: [],
+    grns: [],
+    vendors: [],
+    lowItems: [],
+    filter: { category: '', q: '', lowStock: false },
+    txnFilter: { txn_type: '', category: '', source: '', q: '' },
+    shortExcess: [],
+    txnOpen: false,
+    txnError: '',
+    txnForm: { category: '', item_id: '', txn_type: 'receive', qty: 0, txn_date: new Date().toISOString().slice(0,10), party: '', person: '', invoice_no: '', order_no: '', remarks: '' },
+    txnItems: [],
+    newItemOpen: false,
+    newItem: { category: 'raw_material', name: '', unit: 'PCS', min_qty: 0, opening_stock: 0 },
+    grnOpen: false,
+    grnForm: { invoice_no: '', invoice_date: new Date().toISOString().slice(0,10), vendor: '', received_by: '', status: 'Pending', remarks: '' },
+    toast: '',
+
+    async init() {
+      await Promise.all([this.loadCategories(), this.loadSummary(), this.loadItems(), this.loadVendors(), this.loadSync()]);
+      this.$watch('tab', async (t) => {
+        if (t === 'transactions') await this.loadTxns();
+        if (t === 'lowstock') await this.loadLow();
+        if (t === 'grn') await this.loadGRNs();
+        if (t === 'shortexcess') await this.loadShortExcess();
+      });
+    },
+    async loadSummary() {
+      this.summary = await fetch('/api/summary').then(r => r.json());
+    },
+    async loadCategories() {
+      this.categories = await fetch('/api/categories').then(r => r.json());
+    },
+    async loadItems() {
+      const p = new URLSearchParams();
+      if (this.filter.category) p.set('category', this.filter.category);
+      if (this.filter.q) p.set('q', this.filter.q);
+      if (this.filter.lowStock) p.set('low_stock', 'true');
+      this.items = await fetch('/api/items?' + p.toString()).then(r => r.json());
+    },
+    async loadTxns() {
+      const p = new URLSearchParams();
+      if (this.txnFilter.txn_type) p.set('txn_type', this.txnFilter.txn_type);
+      if (this.txnFilter.category) p.set('category', this.txnFilter.category);
+      if (this.txnFilter.source) p.set('source', this.txnFilter.source);
+      if (this.txnFilter.q) p.set('q', this.txnFilter.q);
+      p.set('limit', '500');
+      this.txns = await fetch('/api/transactions?' + p.toString()).then(r => r.json());
+    },
+    async loadShortExcess() {
+      this.shortExcess = await fetch('/api/short-excess?limit=500').then(r => r.json());
+    },
+    exportTxns(period) {
+      const p = new URLSearchParams({ period });
+      if (this.txnFilter.txn_type) p.set('txn_type', this.txnFilter.txn_type);
+      if (this.txnFilter.category) p.set('category', this.txnFilter.category);
+      if (this.txnFilter.source) p.set('source', this.txnFilter.source);
+      window.location.href = '/api/transactions/export?' + p.toString();
+    },
+    async loadLow() {
+      this.lowItems = await fetch('/api/items?low_stock=true&limit=2000').then(r => r.json());
+    },
+    async loadGRNs() {
+      this.grns = await fetch('/api/grns').then(r => r.json());
+    },
+    async loadVendors() {
+      this.vendors = await fetch('/api/vendors').then(r => r.json());
+    },
+    async loadSync() {
+      this.sync = await fetch('/api/sync/status').then(r => r.json());
+    },
+    catLabel(k) {
+      return (this.categories.find(c => c.key === k) || {}).label || k;
+    },
+    fmt(n) {
+      if (n === undefined || n === null) return '0';
+      const num = Number(n);
+      if (Number.isInteger(num)) return num.toLocaleString('en-IN');
+      return num.toLocaleString('en-IN', {maximumFractionDigits: 2});
+    },
+    fmtDate(d) {
+      if (!d) return '';
+      return new Date(d).toLocaleString('en-IN', {dateStyle:'short', timeStyle:'short'});
+    },
+    async openTxn(type, item) {
+      this.txnError = '';
+      this.txnForm = {
+        category: item ? item.category : '',
+        item_id: item ? item.id : '',
+        txn_type: type,
+        qty: 0,
+        txn_date: new Date().toISOString().slice(0,10),
+        party: '', person: '', invoice_no: '', order_no: '', remarks: ''
+      };
+      this.txnItems = [];
+      if (item) await this.loadTxnItems();
+      this.txnOpen = true;
+    },
+    async loadTxnItems() {
+      if (!this.txnForm.category) { this.txnItems = []; return; }
+      const p = new URLSearchParams({category: this.txnForm.category, limit: '2000'});
+      this.txnItems = await fetch('/api/items?' + p.toString()).then(r => r.json());
+    },
+    async submitTxn() {
+      this.txnError = '';
+      if (!this.txnForm.item_id || !this.txnForm.qty) {
+        this.txnError = 'Item and Qty required';
+        return;
+      }
+      const body = {...this.txnForm};
+      body.txn_date = new Date(body.txn_date).toISOString();
+      const r = await fetch('/api/transactions', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        this.txnError = e.detail || 'Save failed';
+        return;
+      }
+      this.txnOpen = false;
+      this.flash('Saved');
+      await Promise.all([this.loadItems(), this.loadSummary(), this.loadVendors()]);
+      if (this.tab === 'transactions') await this.loadTxns();
+      if (this.tab === 'lowstock') await this.loadLow();
+    },
+    async submitItem() {
+      if (!this.newItem.name) return;
+      const r = await fetch('/api/items', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(this.newItem),
+      });
+      if (r.ok) {
+        this.newItemOpen = false;
+        this.newItem = { category: 'raw_material', name: '', unit: 'PCS', min_qty: 0, opening_stock: 0 };
+        this.flash('Item created');
+        await Promise.all([this.loadItems(), this.loadCategories(), this.loadSummary()]);
+      }
+    },
+    async submitGRN() {
+      if (!this.grnForm.invoice_no || !this.grnForm.vendor) return;
+      const body = {...this.grnForm};
+      body.invoice_date = body.invoice_date ? new Date(body.invoice_date).toISOString() : null;
+      const r = await fetch('/api/grns', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (r.ok) {
+        this.grnOpen = false;
+        this.grnForm = { invoice_no: '', invoice_date: new Date().toISOString().slice(0,10), vendor: '', received_by: '', status: 'Pending', remarks: '' };
+        this.flash('GRN saved');
+        await this.loadGRNs();
+      }
+    },
+    flash(msg) {
+      this.toast = msg;
+      setTimeout(() => this.toast = '', 1800);
+    },
+  };
+}
+</script>
+</body>
+</html>

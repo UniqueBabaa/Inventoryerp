@@ -1,0 +1,7 @@
+fastapi==0.115.5
+sqlalchemy==2.0.36
+pydantic==2.10.3
+psycopg2-binary==2.9.10
+gspread==6.1.4
+google-auth==2.36.0
+python-multipart==0.0.20

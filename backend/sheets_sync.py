@@ -45,13 +45,18 @@ _spreadsheet = None
 _enabled: Optional[bool] = None
 
 
+def _has_creds() -> bool:
+    """Either an env-var JSON or a file path with the service-account key."""
+    return bool(os.environ.get("GOOGLE_CREDENTIALS_JSON")) or os.path.exists(CRED_PATH)
+
+
 def enabled() -> bool:
     """True if write-back to sheet is configured."""
     global _enabled
     if _enabled is not None:
         return _enabled
-    if not os.path.exists(CRED_PATH):
-        log.info("Sheets write-back disabled: credentials not found at %s", CRED_PATH)
+    if not _has_creds():
+        log.info("Sheets write-back disabled: no GOOGLE_CREDENTIALS_JSON env var and no %s file", CRED_PATH)
         _enabled = False
         return False
     try:
@@ -69,13 +74,19 @@ def _connect():
     if _spreadsheet is not None:
         return _spreadsheet
     import gspread
+    import json as _json
     from google.oauth2.service_account import Credentials
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    creds = Credentials.from_service_account_file(CRED_PATH, scopes=scopes)
+    env_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if env_json:
+        info = _json.loads(env_json)
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+    else:
+        creds = Credentials.from_service_account_file(CRED_PATH, scopes=scopes)
     _client = gspread.authorize(creds)
     _spreadsheet = _client.open_by_key(SHEET_ID)
     _ensure_tabs(_spreadsheet)
@@ -149,6 +160,8 @@ def status() -> dict:
         "enabled": enabled(),
         "sheet_id": SHEET_ID,
         "credentials_path": CRED_PATH,
-        "credentials_present": os.path.exists(CRED_PATH),
+        "credentials_present": _has_creds(),
+        "credentials_source": "env" if os.environ.get("GOOGLE_CREDENTIALS_JSON")
+                              else ("file" if os.path.exists(CRED_PATH) else "none"),
         "tabs": [TXN_TAB, ITEMS_TAB],
     }
