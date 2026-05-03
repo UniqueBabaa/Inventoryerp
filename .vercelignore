@@ -1,7 +1,9 @@
 .venv/
 __pycache__/
 *.pyc
-data/
+data/cache/
+data/credentials.json
+data/seed_items.json
 .git/
 .gitignore
 .DS_Store
