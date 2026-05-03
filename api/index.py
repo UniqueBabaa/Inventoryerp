@@ -1,15 +1,11 @@
-"""Vercel serverless entry point.
-
-Vercel's @vercel/python runtime detects an ASGI `app` export and serves it.
-We re-export the FastAPI app from backend.main here.
-"""
-import sys
+"""Vercel entry — re-exports the FastAPI app."""
 import os
+import sys
 
-# Make backend importable from /var/task on Vercel
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
 
 from backend.main import app  # noqa: E402,F401
 
-# Vercel inspects this module-level variable
 __all__ = ["app"]
